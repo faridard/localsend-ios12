@@ -79,6 +79,7 @@ final class ShareViewController: UIViewController {
             }
         }
         providers = collected
+        NSLog("[LocalSendShare] begin: providers=%d", providers.count)
 
         if providers.isEmpty {
             for case let item as NSExtensionItem in context.inputItems {
@@ -276,7 +277,10 @@ final class ShareViewController: UIViewController {
     }
 
     private func storeFile(at source: URL, type: Int, fallbackExtension: String) -> [String: Any]? {
-        guard let container = groupContainer else { return nil }
+        guard let container = groupContainer else {
+            NSLog("[LocalSendShare] storeFile: app group container is nil")
+            return nil
+        }
         let name = sanitizedFileName(source.lastPathComponent, fallbackExtension: fallbackExtension)
         let destination = uniqueDestination(in: container, fileName: name)
         do {
@@ -284,19 +288,26 @@ final class ShareViewController: UIViewController {
                 try FileManager.default.removeItem(at: destination)
             }
             try FileManager.default.copyItem(at: source, to: destination)
+            NSLog("[LocalSendShare] stored %@", destination.path)
             return ["path": destination.absoluteString, "type": type]
         } catch {
+            NSLog("[LocalSendShare] copy failed %@: %@", source.path, error.localizedDescription)
             return nil
         }
     }
 
     private func storeData(_ data: Data, type: Int, preferredExtension: String) -> [String: Any]? {
-        guard let container = groupContainer else { return nil }
+        guard let container = groupContainer else {
+            NSLog("[LocalSendShare] storeData: app group container is nil")
+            return nil
+        }
         let destination = container.appendingPathComponent(UUID().uuidString + "." + preferredExtension)
         do {
             try data.write(to: destination, options: .atomic)
+            NSLog("[LocalSendShare] stored data %@", destination.path)
             return ["path": destination.absoluteString, "type": type]
         } catch {
+            NSLog("[LocalSendShare] write failed %@: %@", destination.path, error.localizedDescription)
             return nil
         }
     }
@@ -368,6 +379,7 @@ final class ShareViewController: UIViewController {
         }
 
         guard let defaults = UserDefaults(suiteName: appGroupId) else {
+            NSLog("[LocalSendShare] UserDefaults suite unavailable")
             showErrorAndComplete("App Group is unavailable on this build.")
             return
         }
@@ -381,7 +393,9 @@ final class ShareViewController: UIViewController {
             let data = try JSONSerialization.data(withJSONObject: media, options: [])
             defaults.set(data, forKey: shareKey)
             defaults.synchronize()
+            NSLog("[LocalSendShare] queued %d attachment(s), %d text part(s), group=%@", attachmentDicts.count, textParts.count, groupContainer?.path ?? "nil")
         } catch {
+            NSLog("[LocalSendShare] json failed: %@", error.localizedDescription)
             showErrorAndComplete("Could not prepare the shared item.")
             return
         }
@@ -394,17 +408,21 @@ final class ShareViewController: UIViewController {
 
     private func openHostApp() {
         guard let url = URL(string: "\(hostScheme)://\(hostBundleId)?key=\(shareKey)") else {
+            NSLog("[LocalSendShare] invalid host URL")
             return
         }
-        var responder: UIResponder? = self
         let selector = sel_registerName("openURL:")
+        var responder: UIResponder? = self
         while let current = responder {
-            if let application = current as? UIApplication {
-                application.perform(selector, with: url)
+            if current.responds(to: selector) {
+                current.perform(selector, with: url)
+                NSLog("[LocalSendShare] openURL via %@", String(describing: type(of: current)))
                 return
             }
             responder = current.next
         }
+        NSLog("[LocalSendShare] no responder handled openURL, trying extensionContext.open")
+        extensionContext?.open(url, completionHandler: nil)
     }
 
     private func showErrorAndComplete(_ message: String) {
